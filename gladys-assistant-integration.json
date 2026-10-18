@@ -1,177 +1,155 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Zehnder ComfoAir Q",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Zehnder ComfoAir Q ventilation (Q350, Q450, Q600) over the local ComfoConnect LAN C.",
+    "fr": "VMC double flux Zehnder ComfoAir Q (Q350, Q450, Q600) en local par le ComfoConnect LAN C."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-zehnder-comfoair:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-zehnder-comfoair/main/cover.png",
+  "categories": ["climate", "environment"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your ComfoConnect LAN C",
+        "fr": "Votre ComfoConnect LAN C"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "For a Zehnder ComfoAir Q (Q350, Q450, Q600) with a ComfoConnect LAN C on your network. Gladys reads the speed, the mode, the temperatures and humidities of the four airs, the flows, the bypass and the days left before the filter change. Gladys registers once on the LAN C (it accepts a few apps only) and never takes the session of the Zehnder app: while that app is connected, Gladys waits. Never tested with a real ventilation unit. Unofficial, not affiliated with Zehnder.",
+        "fr": "Pour une VMC Zehnder ComfoAir Q (Q350, Q450, Q600) avec un ComfoConnect LAN C sur votre réseau. Gladys lit la vitesse, le mode, les températures et humidités des quatre airs, les débits, le bypass et les jours restants avant le changement du filtre. Gladys s'enregistre une seule fois sur le LAN C (il n'accepte que quelques applications) et ne prend jamais la session de l'application Zehnder : tant que celle-ci est connectée, Gladys attend. Jamais testé avec une vraie VMC. Non officiel, sans lien avec Zehnder."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-zehnder-comfoair/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-zehnder-comfoair/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "host",
+      "type": "string",
+      "label": {
+        "en": "IP address of the LAN C",
+        "fr": "Adresse IP du LAN C"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
+      "description": {
+        "en": "Give the LAN C a fixed address in your router. Gladys asks it for its identifier (UDP port 56747), then connects (TCP port 56747).",
+        "fr": "Donnez au LAN C une adresse fixe dans votre box. Gladys lui demande son identifiant (port UDP 56747), puis s'y connecte (port TCP 56747)."
+      },
+      "placeholder": {
+        "en": "192.168.1.20",
+        "fr": "192.168.1.20"
+      },
+      "required": true
     },
     {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
-      "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+      "key": "pin",
+      "type": "secret",
+      "label": {
+        "en": "PIN of the LAN C",
+        "fr": "PIN du LAN C"
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "description": {
+        "en": "4 digits, used only once to register Gladys on the LAN C. Empty: 0000, the PIN out of the box. Kept by Gladys in its database, never shown again, sent only to the LAN C, never written in the logs.",
+        "fr": "4 chiffres, utilisés une seule fois pour enregistrer Gladys sur le LAN C. Vide : 0000, le PIN d'origine. Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement au LAN C, jamais écrit dans les journaux."
+      },
+      "required": false
     },
     {
-      "key": "unit",
+      "key": "safety",
+      "type": "section",
+      "label": {
+        "en": "Commands",
+        "fr": "Commandes"
+      },
+      "description": {
+        "en": "Changing the speed or the mode from Gladys is off by default. Once allowed, every Gladys user, every scene and the Gladys app can change them. Speed 0 (away) almost stops the ventilation (humidity, air quality): it needs its own option. The unit is read before each command; every command is written in the integration logs.",
+        "fr": "Changer la vitesse ou le mode depuis Gladys est désactivé par défaut. Une fois autorisé, tout utilisateur de Gladys, toute scène et l'application Gladys peuvent les changer. La vitesse 0 (absent) coupe presque la ventilation (humidité, qualité de l'air) : elle demande sa propre option. La VMC est relue avant chaque commande ; chaque commande est écrite dans les journaux de l'intégration."
+      }
+    },
+    {
+      "key": "allow_commands",
+      "type": "boolean",
+      "label": {
+        "en": "Allow changing the speed and the mode from Gladys",
+        "fr": "Autoriser le réglage de la vitesse et du mode depuis Gladys"
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "allow_away",
+      "type": "boolean",
+      "label": {
+        "en": "Also allow speed 0 (away: the ventilation almost stops)",
+        "fr": "Autoriser aussi la vitesse 0 (absent : la ventilation est presque coupée)"
+      },
+      "required": false,
+      "default": false
+    },
+    {
+      "key": "language",
       "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "label": {
+        "en": "Language of the names",
+        "fr": "Langue des noms"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Used for the names of the features added from now on, and for the texts (mode, bypass).",
+        "fr": "Sert aux noms des fonctionnalités ajoutées désormais, et aux textes (mode, bypass)."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
-      "max": 3600
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
       "timeout_seconds": 30
     },
     {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
+      "key": "list_apps",
+      "label": {
+        "en": "List the apps registered on the LAN C",
+        "fr": "Lister les applications enregistrées sur le LAN C"
       },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
+      "timeout_seconds": 15
     }
   ]
 }
