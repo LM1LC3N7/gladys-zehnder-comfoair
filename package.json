@@ -1,6 +1,6 @@
 {
   "name": "gladys-zehnder-comfoair",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for the Zehnder ComfoAir Q ventilation units (Q350, Q450, Q600) over the local ComfoConnect LAN C. Unofficial, not affiliated with Zehnder.",
   "type": "module",
