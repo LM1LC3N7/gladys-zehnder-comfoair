@@ -204,5 +204,16 @@ up to date at the end of every milestone.
   selects and texts at once.
 - **M7**: "auto" (two messages) failing on the second: "partly applied".
 - **M8**: `npm audit fix` (lockfile only).
+
+## Decisions after the approval round 1 (2026-10-18)
+
+- A failed publication (429, 5xx, no answer) pauses every request to
+  Gladys for 60 s (the states are kept, the latest of each); the 30 s
+  interval of the measures never makes a retry per second (test: at most 2
+  requests in a minute against a failing Gladys).
+- The hold of the zeros is per sensor, counted from its own subscription:
+  a sensor subscribed late keeps its whole 5 s (test).
+- The manifest says the PIN is sent at each registration attempt (one per
+  user action at most), as the docs.
 - **Not checked**: Docker is not installed on this PC, so no image build and
   no end-to-end test in a container; never run against a real LAN C.

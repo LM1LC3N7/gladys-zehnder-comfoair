@@ -595,6 +595,13 @@ test('the hold: a held zero is never emitted after the real value (slow subscrip
   const bridge = new FakeBridge({ pin: 1234 });
   const held = new Map();
   bridge.hold = (e) => {
+    if (e.type === OP.CN_RPDO_REQUEST && e.msg.pdid === 276 && !held.has(276)) {
+      // Subscribed late (after 8 s): its zero, its real value 2 s later.
+      held.set(276, e);
+      bridge.current.send(OP.CN_RPDO_CONFIRM, { reference: e.reference });
+      bridge.notify(bridge.current, 276, Buffer.alloc(2));
+      return true;
+    }
     if (e.type === OP.CN_RPDO_REQUEST && (e.msg.pdid === 65 || e.msg.pdid === 56)) {
       if (held.has(e.msg.pdid)) return false;
       held.set(e.msg.pdid, e);
@@ -605,7 +612,11 @@ test('the hold: a held zero is never emitted after the real value (slow subscrip
   };
   const ctx = await setup(t, { bridge, create: false });
   const speeds = [];
-  ctx.app.link.on('value', ({ key, value }) => key === 'speed' && speeds.push(value));
+  const outdoor = [];
+  ctx.app.link.on('value', ({ key, value }) => {
+    if (key === 'speed') speeds.push(value);
+    if (key === 'tempOutdoor') outdoor.push(value);
+  });
   await until(() => held.has(65));
   bridge.sendZerosFirst = false;
   await ctx.clock.advance(4_000);
@@ -615,7 +626,11 @@ test('the hold: a held zero is never emitted after the real value (slow subscrip
   bridge.notify(bridge.current, 65);
   await ctx.clock.advance(2_000);
   bridge.respond(bridge.current, held.get(56));
+  await until(() => held.has(276));
+  await ctx.clock.advance(2_000);
+  bridge.notify(bridge.current, 276);
   await ctx.clock.advance(10_000);
+  assert.deepEqual(outdoor, [85], 'the zero of a late subscription is held by its own hold');
   await ctx.app.chain;
   assert.equal(ctx.app.link.ready, true);
   assert.equal(speeds.at(-1), 2, JSON.stringify(speeds));
@@ -711,4 +726,27 @@ test('a measure goes to Gladys at most every 30 s; the latest value is kept', as
   await ctx.clock.advance(30_000);
   assert.equal(sent().length, before + 2);
   assert.equal(ctx.state('temperature-outdoor'), 9.7);
+});
+
+test('Gladys refuses the states: at most one request per minute, the values kept', async (t) => {
+  const ctx = await setup(t);
+  await ctx.clock.advance(40_000);
+  let posts = 0;
+  const real = ctx.gladys.publishStates.bind(ctx.gladys);
+  ctx.gladys.publishStates = async () => {
+    posts += 1;
+    throw new Error('Too Many Requests');
+  };
+  for (let i = 0; i < 12; i += 1) {
+    ctx.bridge.speed = i % 2 === 0 ? 3 : 1;
+    ctx.bridge.notify(ctx.bridge.current, 65);
+    await ctx.clock.advance(5_000);
+  }
+  assert.ok(posts <= 2, `${posts} requests in 60 s`);
+  const warnings = ctx.logger.lines.filter((l) => /Publishing the states failed/.test(l)).length;
+  assert.ok(warnings <= 2, `${warnings} warnings`);
+  // Gladys answers again: the latest value goes.
+  ctx.gladys.publishStates = real;
+  await ctx.clock.advance(65_000);
+  assert.equal(ctx.state('speed'), '1');
 });

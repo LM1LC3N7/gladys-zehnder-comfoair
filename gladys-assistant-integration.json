@@ -66,8 +66,8 @@
         "fr": "PIN du LAN C"
       },
       "description": {
-        "en": "4 digits, used only once to register Gladys on the LAN C. Empty: 0000, the PIN out of the box. Kept by Gladys in its database, never shown again, sent only to the LAN C, never written in the logs.",
-        "fr": "4 chiffres, utilisés une seule fois pour enregistrer Gladys sur le LAN C. Vide : 0000, le PIN d'origine. Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement au LAN C, jamais écrit dans les journaux."
+        "en": "4 digits, used to register Gladys on the LAN C: sent at each registration attempt (one per action of yours at most). Empty: 0000, the PIN out of the box. Kept by Gladys in its database, never shown again, sent only to the LAN C, never written in the logs.",
+        "fr": "4 chiffres, pour enregistrer Gladys sur le LAN C : envoyés à chaque tentative d'enregistrement (une par action de votre part au plus). Vide : 0000, le PIN d'origine. Gardé par Gladys dans sa base, jamais réaffiché, envoyé seulement au LAN C, jamais écrit dans les journaux."
       },
       "required": false
     },

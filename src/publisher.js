@@ -78,6 +78,8 @@ export class StatePublisher {
     this.inflight = new Map();
     /** Ids forgotten while their value was on its way: queued again when it lands. */
     this.forgotten = new Set();
+    /** No request before this time (after a failed one). */
+    this.retryAt = -Infinity;
   }
 
   heartbeat(id) {
@@ -127,9 +129,15 @@ export class StatePublisher {
 
   async send() {
     if (this.pending.size === 0) return;
+    const now = this.now();
+    // After a failed request (429, 5xx, no answer), nothing is sent again
+    // before the pause: never a request per second against a failing Gladys.
+    if (now < this.retryAt) {
+      this.later(this.retryAt - now);
+      return;
+    }
     const left = this.budget.left;
     const entries = [...this.pending.values()];
-    const now = this.now();
     const priority = entries.filter((s) => isPriority(s.device_feature_external_id));
     // A measure is sent at most every TIMINGS.minInterval (its history stays
     // light); the latest value waits. Selects and texts go at once.
@@ -169,11 +177,16 @@ export class StatePublisher {
           this.forgotten.delete(state.device_feature_external_id);
         }
         this.logger.warn(`Publishing the states failed: ${err.message}`);
-        for (const state of part) {
+        // Kept for the next try (the rest of the batch too), unless newer.
+        for (const state of batch.slice(i)) {
           if (!this.pending.has(state.device_feature_external_id)) {
             this.pending.set(state.device_feature_external_id, state);
           }
         }
+        this.budget.spend(part.length);
+        this.retryAt = this.now() + TIMINGS.publishRetry;
+        this.later(TIMINGS.publishRetry);
+        return;
       }
       this.budget.spend(part.length);
     }

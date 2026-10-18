@@ -250,6 +250,8 @@ export const TIMINGS = {
   otherSession: [MINUTE, 2 * MINUTE, 5 * MINUTE],
   /** The session taken by another app: wait 5 minutes before asking again. */
   takenOver: 5 * MINUTE,
+  /** After a failed publication (429, 5xx, no answer): 60 s before any new request. */
+  publishRetry: MINUTE,
   /** A measure (temperature, humidity, flow...) goes to Gladys at most every 30 s. */
   minInterval: 30 * SECOND,
   /** The states are offered to the publisher every 5 min (for the heartbeats). */

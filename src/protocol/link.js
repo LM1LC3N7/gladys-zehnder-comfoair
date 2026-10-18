@@ -110,14 +110,15 @@ export class ComfoLink extends EventEmitter {
     this.state = 'idle';
     this.retryTimer = undefined;
     this.keepAliveTimer = undefined;
-    this.holdTimer = undefined;
+    this.holdTimers = new Set();
     this.failures = 0;
     this.busyCount = 0;
     this.nodes = new Map();
     this.nodeWaiters = new Set();
     this.held = new Map();
     this.released = new Set();
-    this.holdUntil = 0;
+    /** pdid -> end of the hold of that sensor. */
+    this.holdUntil = new Map();
     this.bridge = undefined;
     this.unit = undefined;
     this.keepAlivePending = false;
@@ -166,10 +167,10 @@ export class ComfoLink extends EventEmitter {
   }
 
   clearTimers() {
-    for (const name of ['retryTimer', 'holdTimer']) {
-      if (this[name]) this.timers.clearTimeout(this[name]);
-      this[name] = undefined;
-    }
+    if (this.retryTimer) this.timers.clearTimeout(this.retryTimer);
+    this.retryTimer = undefined;
+    for (const timer of this.holdTimers) this.timers.clearTimeout(timer);
+    this.holdTimers.clear();
     if (this.keepAliveTimer) this.timers.clearInterval(this.keepAliveTimer);
     this.keepAliveTimer = undefined;
     this.keepAlivePending = false;
@@ -396,16 +397,18 @@ export class ComfoLink extends EventEmitter {
   async subscribe(generation) {
     this.held = new Map();
     this.released = new Set();
-    this.holdUntil = this.now() + TIMINGS.sensorHold;
-    // The end of the hold is fixed now, never after a slow subscription loop:
-    // a held zero is never emitted after a real value that came in between.
-    if (this.holdTimer) this.timers.clearTimeout(this.holdTimer);
-    this.holdTimer = this.timers.setTimeout(() => {
-      this.holdTimer = undefined;
-      this.releaseHolds(generation);
-    }, TIMINGS.sensorHold);
+    this.holdUntil = new Map();
     for (const [pdid, { type }] of SENSORS) {
       this.check(generation);
+      // A hold per sensor, counted from its own subscription, its end armed
+      // now: a sensor subscribed late keeps its whole hold, and a held zero
+      // is never emitted after a real value that came in between.
+      this.holdUntil.set(pdid, this.now() + TIMINGS.sensorHold);
+      const timer = this.timers.setTimeout(() => {
+        this.holdTimers.delete(timer);
+        this.releaseHold(generation, pdid);
+      }, TIMINGS.sensorHold);
+      this.holdTimers.add(timer);
       try {
         await this.client.request(OP.CN_RPDO_REQUEST, { pdid, zone: 1, type });
       } catch (err) {
@@ -427,16 +430,14 @@ export class ComfoLink extends EventEmitter {
     }
   }
 
-  /** The end of the hold: the last value of each sensor still held, zero included. */
-  releaseHolds(generation) {
-    if (generation !== this.generation) return;
-    const held = [...this.held];
-    this.held.clear();
-    for (const [pdid, value] of held) {
-      this.released.add(pdid);
-      this.emit('value', { key: SENSORS.get(pdid).key, value });
-    }
-    for (const pdid of SENSORS.keys()) this.released.add(pdid);
+  /** The end of the hold of a sensor: its last value still held, zero included. */
+  releaseHold(generation, pdid) {
+    if (generation !== this.generation || this.released.has(pdid)) return;
+    this.released.add(pdid);
+    if (!this.held.has(pdid)) return;
+    const value = this.held.get(pdid);
+    this.held.delete(pdid);
+    this.emit('value', { key: SENSORS.get(pdid).key, value });
   }
 
   onPdo({ pdid, data }) {
@@ -446,7 +447,7 @@ export class ComfoLink extends EventEmitter {
     if (value === undefined) return;
     // The bridge sends zeros right after a subscription: held until a
     // non-zero value or the end of the hold (aiocomfoconnect _hold_sensor).
-    if (!this.released.has(pdid) && this.now() < this.holdUntil) {
+    if (!this.released.has(pdid) && this.now() < (this.holdUntil.get(pdid) ?? -Infinity)) {
       if (value === 0) {
         this.held.set(pdid, value);
         return;
