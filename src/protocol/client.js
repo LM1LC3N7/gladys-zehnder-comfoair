@@ -273,7 +273,10 @@ export class ComfoClient extends EventEmitter {
       return;
     }
     const { op, msg, dst } = packet;
-    if (dst !== this.localUuid) {
+    // aiocomfoconnect never reads `dst`, and the RegisterAppConfirm example of
+    // its PROTOCOL.md carries the bridge UUID there: ours or the bridge's are
+    // both taken (to check on a real LAN C); any other one is dropped.
+    if (dst !== this.localUuid && dst !== this.bridgeUuid) {
       this.noteDrop('sent to another app');
       return;
     }

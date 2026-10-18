@@ -53,6 +53,23 @@ export function speedOf(value) {
   return undefined;
 }
 
+/**
+ * The answers of the schedule reads (aiocomfoconnect get_speed / get_mode):
+ * 14 bytes, the speed in the last one (0..3), the manual flag in the first
+ * one (0 or 1). Any other shape: undefined (state unknown, nothing decided).
+ */
+export function speedFrom(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length !== 14) return undefined;
+  const speed = buffer[13];
+  return speed <= 3 ? speed : undefined;
+}
+
+export function modeFrom(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length !== 14) return undefined;
+  if (buffer[0] === 1) return 'manual';
+  return buffer[0] === 0 ? 'auto' : undefined;
+}
+
 export const modeOf = (value) =>
   typeof value === 'string' && MODES.includes(value) ? value : undefined;
 
@@ -88,7 +105,9 @@ export class ComfoAirApp {
     this.config = normalizeConfig();
     this.key = undefined;
     this.memory = normalizeMemory(null);
-    this.uuidReady = false;
+    /** 'ok', 'not_saved' or 'unreadable' (src/store.js). */
+    this.uuidState = 'not_saved';
+    this.memoryUnreadable = false;
     this.unit = undefined;
     this.values = emptyValues();
     /** What the link said last: { kind, ... }. */
@@ -135,6 +154,8 @@ export class ComfoAirApp {
   // --- /data (the registry of the link) -----------------------------------------
 
   async saveMemory() {
+    // A state file that could not be read is never overwritten (its UUID holds a place).
+    if (this.memoryUnreadable) return false;
     try {
       await this.store.save(this.memory);
       return true;
@@ -147,24 +168,57 @@ export class ComfoAirApp {
   /**
    * The UUID Gladys registers under: created once, saved, read back. Without
    * it saved, no registration (a new UUID at each restart would take a new
-   * place on the bridge each time).
+   * place on the bridge each time). A state file that exists but cannot be
+   * read (or holds no valid UUID) is never replaced: nothing starts, the
+   * status says so.
    */
   async ensureUuid() {
-    this.memory = normalizeMemory(await this.store.load().catch(() => null));
-    if (this.memory.uuid) return true;
+    let raw;
+    try {
+      raw = await this.store.load();
+    } catch (err) {
+      this.logger.error(`ComfoConnect: the state file in /data is unreadable (${err.message})`);
+      this.memoryUnreadable = true;
+      this.memory = normalizeMemory(null);
+      return 'unreadable';
+    }
+    this.memory = normalizeMemory(raw);
+    if (raw !== null && (typeof raw !== 'object' || raw.uuid !== undefined) && !this.memory.uuid) {
+      this.logger.error('ComfoConnect: the state file in /data holds no valid identifier');
+      this.memoryUnreadable = true;
+      return 'unreadable';
+    }
+    this.memoryUnreadable = false;
+    if (this.memory.uuid) return 'ok';
     const uuid = newUuid();
     this.memory.uuid = uuid;
     if (!(await this.saveMemory())) {
       this.memory.uuid = null;
-      return false;
+      return 'not_saved';
     }
     const back = normalizeMemory(await this.store.load().catch(() => null));
     if (back.uuid !== uuid) {
       this.memory.uuid = null;
-      return false;
+      return 'not_saved';
     }
     this.logger.info('ComfoConnect: new identifier for Gladys created and kept in /data');
-    return true;
+    return 'ok';
+  }
+
+  attemptedWith(uuid) {
+    return this.memory.attempt?.bridge === uuid;
+  }
+
+  /** Persisted BEFORE the RegisterApp is written; false when /data cannot keep it. */
+  async markAttempt(uuid) {
+    this.memory.attempt = { bridge: uuid, at: this.now() };
+    return this.saveMemory();
+  }
+
+  async clearAttempt() {
+    if (!this.memory.attempt) return;
+    this.memory.attempt = null;
+    await this.saveMemory();
   }
 
   knownBridge(host) {
@@ -186,8 +240,11 @@ export class ComfoAirApp {
   }
 
   async markRegistered(uuid) {
-    if (this.registeredWith(uuid)) return;
-    this.memory.registered = [uuid, ...this.memory.registered].slice(0, 8);
+    if (this.registeredWith(uuid) && !this.memory.attempt) return;
+    if (!this.registeredWith(uuid)) {
+      this.memory.registered = [uuid, ...this.memory.registered].slice(0, 8);
+    }
+    this.memory.attempt = null;
     await this.saveMemory();
   }
 
@@ -205,7 +262,7 @@ export class ComfoAirApp {
     const next = normalizeConfig(raw);
     this.config = next;
     this.key = sessionKey(next);
-    this.uuidReady = await this.ensureUuid();
+    this.uuidState = await this.ensureUuid();
     if (!this.unit && this.memory.unit) this.unit = { ...this.memory.unit };
     this.linkState = { kind: 'idle' };
     await this.publishDevices();
@@ -219,7 +276,7 @@ export class ComfoAirApp {
       this.logger.warn(
         `ComfoConnect: stopped before (${stop.kind}): no connection until the configuration changes or "Test the connection" is clicked`,
       );
-      this.linkState = { kind: 'stopped', stop: stop.kind };
+      this.linkState = { kind: 'stopped', stop: stop.kind, detail: stop.detail };
       await this.updateStatus();
       return;
     }
@@ -260,7 +317,8 @@ export class ComfoAirApp {
     if (this.config.hostInvalid) return T.hostInvalid;
     if (!this.config.host) return T.noHost;
     if (this.config.pin === undefined) return T.pinInvalid;
-    if (!this.uuidReady) return T.notSaved;
+    if (this.uuidState === 'unreadable') return T.stateUnreadable;
+    if (this.uuidState !== 'ok') return T.notSaved;
     return undefined;
   }
 
@@ -309,16 +367,19 @@ export class ComfoAirApp {
   }
 
   /**
-   * Lifts a stop. After "registration removed", the bridges are forgotten as
-   * registered too: the user's click allows exactly one new registration.
+   * Lifts a stop (a user action: a new address or PIN, or the button). After
+   * "registration removed", the bridges are forgotten as registered too, and
+   * an unanswered registration attempt is forgotten: the user's action
+   * allows exactly one new registration.
    */
   async liftStop() {
     const stop =
       this.memory.stop ??
       (this.linkState.kind === 'stopped' ? { kind: this.linkState.stop } : null);
-    if (!stop) return;
-    if (stop.kind === 'unregistered') this.memory.registered = [];
+    if (!stop && !this.memory.attempt) return;
+    if (stop?.kind === 'unregistered') this.memory.registered = [];
     this.memory.stop = null;
+    this.memory.attempt = null;
     await this.saveMemory();
   }
 
@@ -356,10 +417,11 @@ export class ComfoAirApp {
     this.wake('down');
   }
 
-  async onStopped({ kind }) {
-    this.linkState = { kind: 'stopped', stop: kind };
+  async onStopped({ kind, reason }) {
+    const detail = String(reason ?? '').slice(0, 60);
+    this.linkState = { kind: 'stopped', stop: kind, detail };
     if (STOP_KINDS.includes(kind)) {
-      this.memory.stop = { place: this.config.host, kind, at: this.now() };
+      this.memory.stop = { place: this.config.host, kind, at: this.now(), detail };
       await this.saveMemory();
     }
     await this.publishBadge();
@@ -456,6 +518,9 @@ export class ComfoAirApp {
       case 'ready':
         return [true, fill(T.connected, this.unit?.model || 'ComfoAir')];
       case 'stopped':
+        if (s.stop === 'registration_failed') {
+          return [false, fill(T.registrationFailed, s.detail || '?')];
+        }
         return [false, STOP_MESSAGES[s.stop] ?? T.unregistered];
       case 'other_session':
         return [false, fill(T.otherSession, s.devicename, wait)];
@@ -555,9 +620,9 @@ export class ComfoAirApp {
   async setSpeed(speed, asked) {
     const what = fill(E.speed, speed);
     this.checkAllowed(FEATURES.SPEED, speed);
-    const fresh = await this.freshRead(RMI.getSpeed(), asked);
-    const current = fresh.length > 0 ? fresh[fresh.length - 1] : undefined;
-    if (current === undefined || current > 3) throw this.refusal(E.stateUnknown);
+    const current = speedFrom(await this.freshRead(RMI.getSpeed(), asked));
+    if (current === undefined) throw this.refusal(E.stateUnknown);
+    this.link.release('speed');
     this.applyValue('speed', current);
     if (String(current) === speed) {
       this.logger.info(`ComfoAir already at speed ${speed}: nothing sent`);
@@ -573,13 +638,25 @@ export class ComfoAirApp {
   async setMode(mode, asked) {
     const what = fill(E.mode, mode);
     this.checkAllowed(FEATURES.MODE, mode);
-    const fresh = await this.freshRead(RMI.getMode(), asked);
-    if (fresh.length === 0) throw this.refusal(E.stateUnknown);
-    const current = fresh[0] === 1 ? 'manual' : 'auto';
+    const current = modeFrom(await this.freshRead(RMI.getMode(), asked));
+    if (current === undefined) throw this.refusal(E.stateUnknown);
+    this.link.release('manual');
     this.applyValue('manual', current === 'manual' ? 1 : 255);
     if (current === mode) {
       this.logger.info(`ComfoAir already in ${mode} mode: nothing sent`);
       return;
+    }
+    if (mode === 'manual' && !this.config.allowAway) {
+      // Manual keeps the current speed: at 0 (away) it would keep the
+      // ventilation almost stopped, which needs the away option.
+      const speed = speedFrom(await this.freshRead(RMI.getSpeed(), asked));
+      if (speed === undefined) throw this.refusal(E.stateUnknown);
+      this.link.release('speed');
+      this.applyValue('speed', speed);
+      if (speed === 0) {
+        this.logger.warn('Command REFUSED (mode manual): the speed is 0 (away), not allowed');
+        throw this.refusal(E.manualAtAway);
+      }
     }
     this.checkAllowed(FEATURES.MODE, mode);
     this.logger.info(`MODE from Gladys: ${mode} (was ${current})`);
@@ -597,7 +674,7 @@ export class ComfoAirApp {
     const sendBy = asked + TIMINGS.sendBy;
     const until = asked + TIMINGS.answerBy;
     let written = false;
-    for (const message of messages) {
+    for (const [index, message] of messages.entries()) {
       try {
         await this.link.rmi(message, {
           sendBy,
@@ -620,6 +697,15 @@ export class ComfoAirApp {
           throw this.refusal(E.offline);
         }
         this.scheduleReadBack();
+        if (index > 0) {
+          // The first message was applied, this one not (or not confirmed).
+          this.logger.warn(
+            `Command PARTLY applied (${word(what, 'en')}): message ${index + 1} failed (${err.message})`,
+          );
+          throw new Error(word(fill(E.partial, word(what, this.language)), this.language), {
+            cause: err,
+          });
+        }
         if (err instanceof ComfoError && err.kind === 'result') {
           const why = err.reply?.result
             ? `${resultName(err.result)} ${err.reply.result}`
@@ -642,12 +728,16 @@ export class ComfoAirApp {
       this.readBacks.delete(timer);
       if (!this.link.ready) return;
       try {
-        const speed = await this.link.rmi(RMI.getSpeed());
-        if (speed.length > 0 && speed[speed.length - 1] <= 3) {
-          this.applyValue('speed', speed[speed.length - 1]);
+        const speed = speedFrom(await this.link.rmi(RMI.getSpeed()));
+        if (speed !== undefined) {
+          this.link.release('speed');
+          this.applyValue('speed', speed);
         }
-        const mode = await this.link.rmi(RMI.getMode());
-        if (mode.length > 0) this.applyValue('manual', mode[0] === 1 ? 1 : 255);
+        const mode = modeFrom(await this.link.rmi(RMI.getMode()));
+        if (mode !== undefined) {
+          this.link.release('manual');
+          this.applyValue('manual', mode === 'manual' ? 1 : 255);
+        }
       } catch (err) {
         this.logger.warn(`ComfoAir: read back after the command failed (${err.message})`);
       }

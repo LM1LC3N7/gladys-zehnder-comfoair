@@ -58,6 +58,17 @@ up to date at the end of every milestone.
 - That the keep-alive (a time request every 30 s) is enough to keep the
   session (aiocomfoconnect 0.4.x also sends `KeepAlive` when idle).
 - The model and serial strings (RMI NODE 01 property 08 and 04).
+- The `dst` UUID of the answers: ours, or the bridge's (the RegisterAppConfirm
+  example of PROTOCOL.md has the bridge's); both are accepted, any other
+  dropped.
+- A half-open session after a crash of the Gladys host: does the LAN C keep
+  the old session (Gladys then waiting on itself with OTHER_SESSION, named
+  "Gladys") until a timeout, and how long?
+- Whether the bridge needs `KeepAlive` (type 101) messages, or the time
+  request every 30 s is enough.
+- The 14-byte answers of the schedule reads (speed, mode): another length
+  refuses the command ("state not readable").
+- Whether the Zehnder app can remove a registered app.
 
 ## Decisions
 
@@ -159,5 +170,39 @@ up to date at the end of every milestone.
   badges and the states are sent again (caches emptied); a stop is kept.
 - **Publisher**: the one of gladys-velbus (300 states per minute, the
   selects and texts first, heartbeats every 30 min spread over 5 min).
+
+## Decisions after the review (2026-10-18)
+
+- **B1 - one registration attempt per user action**: the attempt (bridge
+  UUID, date) is persisted in `/data` BEFORE the RegisterApp is written
+  (nothing is written when it cannot be kept). OK clears it; NOT_ALLOWED ->
+  `pin_refused`, NO_RESOURCES -> `full`; any other outcome after the write
+  (another code, a timeout, a cut, a crash before the answer) -> persisted
+  stop `registration_failed` with the code in the status. A pending attempt
+  found at the next session stops too, without writing. Lifted by "Test the
+  connection" or a new address or PIN (one new try). Not written at all
+  (refused before the socket): the attempt is forgotten. Tests: timeout,
+  INTERNAL_ERROR, BAD_REQUEST, cut connection: one RegisterApp in 2 hours.
+  No automatic retry of the session after such a stop (the optional one of
+  the review is left out: the button does it).
+- **I1 - hold**: the end of the hold is armed before the subscription loop;
+  a value emitted voids the held zero; a fresh RMI read of the speed or mode
+  releases its hold too.
+- **I2 - `dst`**: ours or the bridge's.
+- **I3 - freeing a place**: docs rewritten (needs an app already
+  registered, the CLI with `--uuid`, it takes the session).
+- **M1**: a state file that exists but cannot be read (or holds no valid
+  UUID) is never replaced: "unreadable state file" status, nothing starts;
+  only a missing file (ENOENT) creates a new UUID.
+- **M2**: the schedule reads must be 14 bytes, speed (last byte) 0..3, mode
+  (first byte) 0 or 1; otherwise "state not readable", nothing sent.
+- **M3**: without `allow_away`, "manual" is refused when the speed read just
+  before is 0.
+- **M4**: the name of the other session goes through `printable()`.
+- **M5**: IPv4 addresses only in the configuration.
+- **M6**: a measure goes to Gladys at most every 30 s (latest value kept);
+  selects and texts at once.
+- **M7**: "auto" (two messages) failing on the second: "partly applied".
+- **M8**: `npm audit fix` (lockfile only).
 - **Not checked**: Docker is not installed on this PC, so no image build and
   no end-to-end test in a container; never run against a real LAN C.

@@ -198,10 +198,15 @@ test('client: an answer belongs to its request (reference AND type AND our UUID)
   // The reference of the RMI with the type of another answer: never taken.
   answer(OP.CN_TIME_CONFIRM, first.op.reference, { message: { currentTime: 1 } });
   // The right answer sent to another app: ignored.
-  answer(OP.CN_RMI_RESPONSE, first.op.reference, { message: { message: hex('09') }, dst: BRIDGE });
+  const other = 'ffeeddccbbaa99887766554433221100';
+  answer(OP.CN_RMI_RESPONSE, first.op.reference, { message: { message: hex('09') }, dst: other });
   // An answer to no request: ignored.
   answer(OP.CN_RMI_RESPONSE, 999, { message: { message: hex('07') } });
-  answer(OP.CN_TIME_CONFIRM, second.op.reference, { message: { currentTime: 42 } });
+  // dst = the bridge UUID (as in the RegisterAppConfirm example of PROTOCOL.md): taken.
+  answer(OP.CN_TIME_CONFIRM, second.op.reference, {
+    message: { currentTime: 42 },
+    dst: BRIDGE,
+  });
   answer(OP.CN_RMI_RESPONSE, first.op.reference, { message: { message: hex('02') } });
   assert.deepEqual((await rmi).msg.message, hex('02'));
   assert.equal((await time).msg.currentTime, 42);

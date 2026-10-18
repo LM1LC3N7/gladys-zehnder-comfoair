@@ -49,9 +49,11 @@ HomeKit, a scene on the switches) can never stop the ventilation.
 
 ## Configuration
 
-1. **IP address of the LAN C**.
-2. **PIN of the LAN C**: 4 digits, used **only once**, to register Gladys on
-   the LAN C. Empty: 0000. It is a secret field: kept by Gladys in its
+1. **IP address of the LAN C** (an IPv4 address, not a name).
+2. **PIN of the LAN C**: 4 digits, sent to the LAN C **at each registration
+   attempt** (one per action of yours at most: first start, new address or
+   PIN, "Test the connection" after a stop). Empty: 0000. It is a secret
+   field: kept by Gladys in its
    database, never shown again in the interface, sent only to the LAN C,
    never written in the logs, never copied to `/data`.
 3. **Allow changing the speed and the mode from Gladys**: off by default.
@@ -60,7 +62,7 @@ HomeKit, a scene on the switches) can never stop the ventilation.
 
 The **Test the connection** button connects at once when no session is open
 and tells how it went. It also lifts a stop (PIN refused, LAN C full,
-registration removed): one new try follows.
+registration removed or unanswered): one new try follows.
 
 The **List the apps registered on the LAN C** button (open session) shows
 the name and identifier of every registered app; the one of Gladys is marked
@@ -79,6 +81,15 @@ the name and identifier of every registered app; the one of Gladys is marked
   "Test the connection".
 - **LAN C full**: stopped the same way, until you free a place (see below)
   and click "Test the connection".
+- **Registration without a clear answer** (an error code, no answer, a cut
+  connection, a restart during the try): the attempt is noted in `/data`
+  before it is sent; it is **never repeated by itself** (the PIN would be
+  sent again). The status gives the code; "Test the connection", a new
+  address or a new PIN allow one new try.
+- If `/data/comfoair-state.json` exists but cannot be read, it is never
+  replaced (it keeps the identifier of Gladys): nothing starts and the status
+  says so. Repair or delete it (Gladys then takes a new place), then restart
+  the integration.
 - **Registration removed** (by another app): Gladys does not register again
   by itself; "Test the connection" allows one new registration.
 - The LAN C opens **one session at a time**. Gladys **never takes** the
@@ -91,23 +102,32 @@ the name and identifier of every registered app; the one of Gladys is marked
 
 ## Freeing a place on the LAN C
 
-1. Click **List the apps registered on the LAN C** (an open session is
-   needed): you see the name and identifier (32 characters) of every app.
-   The LAN C recognises an app by this identifier alone, without the PIN: it
-   is a key, do not share it.
-2. Remove those you no longer use (an old phone, a Home Assistant
-   test...) **from an app already registered that can do it**, for example
-   the command line tool of aiocomfoconnect on a computer of your network
-   already registered:
-   `python -m aiocomfoconnect deregister <identifier to remove> --host <address of the LAN C>`
-   (see its documentation for the options). Gladys itself removes no app in
-   this version.
-3. To free **the place of Gladys**: remove its identifier (marked "this
-   integration" in the list, also in `/data/comfoair-state.json`) from
-   another app. **Removing the integration from Gladys does not free its
-   place** on the LAN C.
-4. As a last resort, a reset of the LAN C (see its manual) sets the PIN back
-   to 0000; it probably clears the registrations too (not checked).
+Removing a registration needs **an app already registered** on the LAN C:
+when it is full, Gladys (not registered yet) can neither list nor remove.
+Gladys itself removes no app in this version. The identifiers (32
+characters) are keys: the LAN C recognises an app by its identifier alone,
+without the PIN; do not share them.
+
+1. **Find the identifier to remove**: when Gladys has a session, the **List
+   the apps registered on the LAN C** button shows the name and identifier
+   of each one (the one of Gladys is marked "(this integration)", its
+   identifier is also in `/data/comfoair-state.json`).
+2. **Remove it from an app already registered**, for example the command
+   line tool of aiocomfoconnect on a computer of your network, with the
+   identifier of an app **already registered** (the one this computer once
+   registered under, or the one of Gladys read in
+   `/data/comfoair-state.json`):
+   `python -m aiocomfoconnect deregister <identifier to remove> --host <address of the LAN C> --uuid <identifier of an app already registered>`.
+   The tool **takes the session** of the LAN C: the Zehnder app or Gladys is
+   cut meanwhile; Gladys comes back by itself within 5 minutes.
+3. The Zehnder app may allow removing a device (not checked). Otherwise, as
+   a last resort, a reset of the LAN C (see its manual) sets the PIN back to
+   0000 and probably clears the registrations (not checked).
+4. **Removing the integration from Gladys does not free its place** on the
+   LAN C: remove its identifier as above.
+
+While Gladys holds the session, the Zehnder app will offer to take it:
+accept, Gladys asks for the session again 5 minutes later.
 
 ## Commands and the away speed
 
@@ -150,8 +170,8 @@ the name and identifier of every registered app; the one of Gladys is marked
 
 - Never tested with a real ventilation unit (see above).
 - The LAN C protocol travels in clear text: a device of your network can
-  read what goes through. The PIN only goes over the network once, at the
-  registration.
+  read what goes through. The PIN goes over the network at each registration
+  attempt (one per action of yours at most).
 - The device is identified by the serial number of the unit: another unit
   gives a new device.
 - Not supported yet: the alarms and errors of the unit, the timed boost, the

@@ -2,6 +2,8 @@
 // The configuration of the manifest `config_schema`, normalized.
 // -----------------------------------------------------------------------------
 
+import { isIP } from 'node:net';
+
 /** Defaults, mirrored by the manifest (checked by test/manifest.test.js). */
 export const DEFAULTS = {
   allow_commands: false,
@@ -16,12 +18,13 @@ export const DEFAULT_PIN = 0;
 
 const bool = (value, fallback) => (typeof value === 'boolean' ? value : fallback);
 
-/** `192.168.1.20` or a host name; a port, a scheme or a path is not taken. */
+/**
+ * An IPv4 address only (`192.168.1.20`): the discovery answer is accepted
+ * only from that address, which a host name would not allow to check.
+ */
 export function parseHost(raw) {
   const text = String(raw ?? '').trim();
-  if (text.length > 253) return '';
-  if (/^[0-9a-z.-]+$/i.test(text) && !text.startsWith('-')) return text.toLowerCase();
-  return '';
+  return isIP(text) === 4 ? text : '';
 }
 
 /**

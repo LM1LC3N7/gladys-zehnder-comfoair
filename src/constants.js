@@ -250,6 +250,8 @@ export const TIMINGS = {
   otherSession: [MINUTE, 2 * MINUTE, 5 * MINUTE],
   /** The session taken by another app: wait 5 minutes before asking again. */
   takenOver: 5 * MINUTE,
+  /** A measure (temperature, humidity, flow...) goes to Gladys at most every 30 s. */
+  minInterval: 30 * SECOND,
   /** The states are offered to the publisher every 5 min (for the heartbeats). */
   sweep: 5 * MINUTE,
   /** The publisher: unchanged states again every 30 min, spread over 5 min. */

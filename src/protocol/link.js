@@ -53,7 +53,7 @@ export class Halt extends Error {
 }
 
 /** The kinds of stop the app persists (the others are retried by themselves). */
-export const STOP_KINDS = ['pin_refused', 'full', 'unregistered'];
+export const STOP_KINDS = ['pin_refused', 'full', 'unregistered', 'registration_failed'];
 
 /** A value of a sensor, at its exact size, little-endian; undefined when too short. */
 export function decodeValue(data, type) {
@@ -124,6 +124,8 @@ export class ComfoLink extends EventEmitter {
     client.on('pdo', (pdo) => this.onPdo(pdo));
     client.on('node', (node) => this.onNode(node));
     client.on('down', ({ reason }) => {
+      // During a registration, its own failure (lost) is the one that counts.
+      if (this.registering) return;
       if (this.state !== 'idle' && this.state !== 'stopped' && this.state !== 'waiting') {
         this.fail(this.generation, new ComfoError(reason, 'lost', { sent: true }));
       }
@@ -257,7 +259,9 @@ export class ComfoLink extends EventEmitter {
         err.kind === 'result' &&
         err.result === RESULT.OTHER_SESSION
       ) {
-        throw new Halt('other_session', { devicename: err.reply?.devicename ?? '' });
+        throw new Halt('other_session', {
+          devicename: printable(String(err.reply?.devicename ?? '')).slice(0, 32),
+        });
       }
       throw err;
     }
@@ -267,7 +271,11 @@ export class ComfoLink extends EventEmitter {
   async login(bridge, generation) {
     const registered = this.registry.registeredWith(bridge.uuid);
     // A ComfoConnect PRO times out a session of an app it does not know (aiocomfoconnect).
-    if (bridge.type === GATEWAY_TYPE.PRO && !registered) await this.register(bridge, generation);
+    if (bridge.type === GATEWAY_TYPE.PRO && !registered) {
+      await this.register(bridge, generation);
+      await this.startSession();
+      return;
+    }
     try {
       await this.startSession();
     } catch (err) {
@@ -295,10 +303,27 @@ export class ComfoLink extends EventEmitter {
     if (!this.registry.registeredWith(bridge.uuid)) await this.registry.markRegistered(bridge.uuid);
   }
 
+  /**
+   * One registration. The attempt is persisted BEFORE the write: an attempt
+   * never answered OK (an error code, a timeout, a cut, a crash) stops the
+   * link, persisted, and is never repeated by itself: the PIN is sent once
+   * per user action at most.
+   */
   async register(bridge, generation) {
+    this.check(generation);
+    if (this.registry.attemptedWith(bridge.uuid)) {
+      throw new Halt('registration_failed', {
+        stop: true,
+        reason: 'an earlier registration got no answer',
+      });
+    }
+    if (!(await this.registry.markAttempt(bridge.uuid))) {
+      throw new Halt('registration_failed', { stop: true, reason: '/data not writable' });
+    }
     this.check(generation);
     const { pin, localUuid } = this.options;
     this.logger.info(`ComfoConnect: registering Gladys on the bridge (as "${DEVICE_NAME}")`);
+    this.registering = true;
     try {
       await this.client.request(OP.REGISTER_APP_REQUEST, {
         uuid: uuidBytes(localUuid),
@@ -306,12 +331,23 @@ export class ComfoLink extends EventEmitter {
         devicename: DEVICE_NAME,
       });
     } catch (err) {
+      this.registering = false;
+      if (err instanceof ComfoError && !err.sent) {
+        // Never written: no attempt to remember.
+        await this.registry.clearAttempt();
+        throw err;
+      }
       if (err instanceof ComfoError && err.kind === 'result') {
         if (err.result === RESULT.NOT_ALLOWED) throw new Halt('pin_refused', { stop: true });
         if (err.result === RESULT.NO_RESOURCES) throw new Halt('full', { stop: true });
+        throw new Halt('registration_failed', { stop: true, reason: resultName(err.result) });
       }
-      throw err;
+      throw new Halt('registration_failed', {
+        stop: true,
+        reason: err instanceof ComfoError ? err.kind : 'error',
+      });
     }
+    this.registering = false;
     this.logger.info('ComfoConnect: Gladys is registered on the bridge');
     await this.registry.markRegistered(bridge.uuid);
   }
@@ -361,6 +397,13 @@ export class ComfoLink extends EventEmitter {
     this.held = new Map();
     this.released = new Set();
     this.holdUntil = this.now() + TIMINGS.sensorHold;
+    // The end of the hold is fixed now, never after a slow subscription loop:
+    // a held zero is never emitted after a real value that came in between.
+    if (this.holdTimer) this.timers.clearTimeout(this.holdTimer);
+    this.holdTimer = this.timers.setTimeout(() => {
+      this.holdTimer = undefined;
+      this.releaseHolds(generation);
+    }, TIMINGS.sensorHold);
     for (const [pdid, { type }] of SENSORS) {
       this.check(generation);
       try {
@@ -373,14 +416,15 @@ export class ComfoLink extends EventEmitter {
         throw err;
       }
     }
-    if (this.holdTimer) this.timers.clearTimeout(this.holdTimer);
-    this.holdTimer = this.timers.setTimeout(
-      () => {
-        this.holdTimer = undefined;
-        this.releaseHolds(generation);
-      },
-      Math.max(0, this.holdUntil - this.now()),
-    );
+  }
+
+  /** A value of `key` was read another way (an RMI read): its held zero is void. */
+  release(key) {
+    for (const [pdid, sensor] of SENSORS) {
+      if (sensor.key !== key) continue;
+      this.held.delete(pdid);
+      this.released.add(pdid);
+    }
   }
 
   /** The end of the hold: the last value of each sensor still held, zero included. */
@@ -407,9 +451,10 @@ export class ComfoLink extends EventEmitter {
         this.held.set(pdid, value);
         return;
       }
-      this.held.delete(pdid);
       this.released.add(pdid);
     }
+    // Emitted now: a zero held before is void.
+    this.held.delete(pdid);
     this.emit('value', { key: sensor.key, value });
   }
 

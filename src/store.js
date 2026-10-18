@@ -26,12 +26,19 @@ export function fileStore(path = STATE_FILE) {
   // One write at a time: two saves never share the temporary file.
   let chain = Promise.resolve();
   return {
+    /**
+     * null when there is no file yet; throws when the file exists but cannot
+     * be read or parsed (the UUID in it must never be replaced silently).
+     */
     async load() {
+      let text;
       try {
-        return JSON.parse(await readFile(path, 'utf8'));
-      } catch {
-        return null;
+        text = await readFile(path, 'utf8');
+      } catch (err) {
+        if (err.code === 'ENOENT') return null;
+        throw err;
       }
+      return JSON.parse(text);
     },
     save(data) {
       const text = JSON.stringify(data);
@@ -47,11 +54,13 @@ export function fileStore(path = STATE_FILE) {
 }
 
 /** In-memory store, for the tests. */
-export function memoryStore(initial = null, { failSaves = false } = {}) {
+export function memoryStore(initial = null, { failSaves = false, failLoads = false } = {}) {
   let data = initial;
   return {
     failSaves,
+    failLoads,
     async load() {
+      if (this.failLoads) throw new Error('EIO: i/o error');
       return data === null ? null : JSON.parse(JSON.stringify(data));
     },
     async save(next) {
@@ -96,6 +105,7 @@ export function normalizeMemory(raw) {
           place: raw.stop.place,
           kind: raw.stop.kind,
           at: Number.isFinite(raw.stop.at) ? raw.stop.at : 0,
+          detail: text(raw.stop.detail, 60),
         }
       : null;
   return {
@@ -104,5 +114,10 @@ export function normalizeMemory(raw) {
     registered,
     unit,
     stop,
+    // A registration written, never answered OK: never repeated by itself.
+    attempt:
+      HEX32.test(raw?.attempt?.bridge) && Number.isFinite(raw?.attempt?.at)
+        ? { bridge: raw.attempt.bridge, at: raw.attempt.at }
+        : null,
   };
 }

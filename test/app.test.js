@@ -217,7 +217,8 @@ test('mode: manual is one write, auto two (manual mode and speed override cancel
   const ctx = await setup(t, { config: ALLOWED });
   let ack = await ctx.set('mode', 'manual');
   assert.equal(ack.success, true, ack.error);
-  assert.deepEqual(ctx.bridge.rmis.at(-2), [0x83, 0x15, 0x08, 0x01]);
+  assert.deepEqual(ctx.bridge.rmis.at(-3), [0x83, 0x15, 0x08, 0x01], 'the mode read');
+  assert.deepEqual(ctx.bridge.rmis.at(-2), [0x83, 0x15, 0x01, 0x01], 'the speed read (not 0)');
   assert.deepEqual(ctx.bridge.rmis.at(-1), [0x84, 0x15, 0x08, 0x01, 0, 0, 0, 0, 1, 0, 0, 0, 1]);
   await settle();
   assert.equal(ctx.state('mode'), 'manual');
@@ -533,4 +534,181 @@ test('an unchanged value is sent again every 30 minutes (heartbeat)', async (t) 
   assert.equal(count(), before, 'nothing new in 20 minutes');
   await ctx.clock.advance(20 * 60_000);
   assert.equal(count(), before + 1);
+});
+
+/** A bridge whose RegisterApp gets `outcome`: a result code, 'timeout' or 'cut'. */
+function registrationBridge(outcome, store) {
+  const bridge = new FakeBridge({ pin: 1234 });
+  bridge.attempts = [];
+  const respond = bridge.respond.bind(bridge);
+  bridge.respond = (socket, entry) => {
+    if (entry.type !== OP.REGISTER_APP_REQUEST) return respond(socket, entry);
+    // The attempt is in /data before the request is written.
+    bridge.attempts.push(store.data?.attempt?.bridge);
+    if (outcome === 'timeout') return undefined;
+    if (outcome === 'cut') return socket.destroy();
+    return socket.send(OP.REGISTER_APP_CONFIRM, { reference: entry.reference, result: outcome });
+  };
+  return bridge;
+}
+
+for (const [name, outcome, code] of [
+  ['no answer', 'timeout', /timeout/],
+  ['INTERNAL_ERROR', 2, /INTERNAL_ERROR/],
+  ['BAD_REQUEST', 1, /BAD_REQUEST/],
+  ['a cut connection', 'cut', /lost/],
+]) {
+  test(`registration with ${name}: one attempt, persisted before, never repeated in 2 hours`, async (t) => {
+    const store = memoryStore();
+    const bridge = registrationBridge(outcome, store);
+    const ctx = await setup(t, { bridge, store, create: false });
+    await ctx.clock.advance(2 * 60 * 60_000);
+    await ctx.app.chain;
+    assert.equal(bridge.sent(OP.REGISTER_APP_REQUEST).length, 1);
+    assert.deepEqual(bridge.attempts, [BRIDGE_UUID], 'persisted before the write');
+    assert.equal(store.data.stop.kind, 'registration_failed');
+    assert.match(ctx.status().message.en, /did not succeed/);
+    assert.match(ctx.status().message.en, code);
+    // A restart keeps the stop.
+    const again = await setup(t, { bridge, store, create: false });
+    await again.clock.advance(60 * 60_000);
+    assert.equal(bridge.sent(OP.REGISTER_APP_REQUEST).length, 1);
+    // The button: exactly one new attempt.
+    const ack = again.gladys.fake.action('test_connection');
+    await again.clock.advance(25_000);
+    await ack;
+    await again.clock.advance(60 * 60_000);
+    assert.equal(bridge.sent(OP.REGISTER_APP_REQUEST).length, 2);
+  });
+}
+
+test('an attempt left pending (crash before the answer): no new RegisterApp by itself', async (t) => {
+  const store = memoryStore({ uuid: 'ab'.repeat(16), attempt: { bridge: BRIDGE_UUID, at: 1 } });
+  const bridge = new FakeBridge({ pin: 1234 });
+  const ctx = await setup(t, { bridge, store, create: false });
+  await ctx.clock.advance(60 * 60_000);
+  assert.equal(bridge.sent(OP.REGISTER_APP_REQUEST).length, 0);
+  assert.match(ctx.status().message.en, /did not succeed/);
+});
+
+test('the hold: a held zero is never emitted after the real value (slow subscriptions)', async (t) => {
+  const bridge = new FakeBridge({ pin: 1234 });
+  const held = new Map();
+  bridge.hold = (e) => {
+    if (e.type === OP.CN_RPDO_REQUEST && (e.msg.pdid === 65 || e.msg.pdid === 56)) {
+      if (held.has(e.msg.pdid)) return false;
+      held.set(e.msg.pdid, e);
+      if (e.msg.pdid === 65) bridge.notify(bridge.current, 65, Buffer.alloc(1));
+      return true;
+    }
+    return false;
+  };
+  const ctx = await setup(t, { bridge, create: false });
+  const speeds = [];
+  ctx.app.link.on('value', ({ key, value }) => key === 'speed' && speeds.push(value));
+  await until(() => held.has(65));
+  bridge.sendZerosFirst = false;
+  await ctx.clock.advance(4_000);
+  bridge.current.send(OP.CN_RPDO_CONFIRM, { reference: held.get(65).reference });
+  await until(() => held.has(56));
+  await ctx.clock.advance(2_000);
+  bridge.notify(bridge.current, 65);
+  await ctx.clock.advance(2_000);
+  bridge.respond(bridge.current, held.get(56));
+  await ctx.clock.advance(10_000);
+  await ctx.app.chain;
+  assert.equal(ctx.app.link.ready, true);
+  assert.equal(speeds.at(-1), 2, JSON.stringify(speeds));
+  assert.ok(
+    !speeds.some((v, i) => v === 0 && speeds.slice(0, i).includes(2)),
+    JSON.stringify(speeds),
+  );
+  assert.equal(ctx.app.values.speed, 2);
+});
+
+test('an unreadable state file is never replaced: nothing starts', async (t) => {
+  const failing = memoryStore({ uuid: 'ab'.repeat(16) }, { failLoads: true });
+  const bridge = new FakeBridge({ pin: 1234 });
+  const ctx = await setup(t, { bridge, store: failing, create: false });
+  await ctx.clock.advance(60_000);
+  assert.match(ctx.status().message.en, /exists but cannot be read/);
+  assert.equal(bridge.sockets.length, 0);
+  assert.equal(failing.data.uuid, 'ab'.repeat(16));
+  const broken = memoryStore({ uuid: 'not-a-uuid', registered: [] });
+  const other = await setup(t, { bridge, store: broken, create: false });
+  await other.clock.advance(60_000);
+  assert.match(other.status().message.en, /exists but cannot be read/);
+  assert.equal(broken.data.uuid, 'not-a-uuid', 'never overwritten');
+  assert.equal(bridge.sockets.length, 0);
+});
+
+test('manual at speed 0 needs the away option', async (t) => {
+  const bridge = new FakeBridge({ pin: 1234, speed: 0 });
+  const ctx = await setup(t, { config: ALLOWED, bridge });
+  const ack = await ctx.set('mode', 'manual');
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /speed is 0 \(away\).*Nothing was sent/);
+  assert.ok(!bridge.rmis.some((m) => m[0] === 0x84));
+});
+
+test('mode auto refused on its second message: "partly applied"', async (t) => {
+  const bridge = new FakeBridge({ pin: 1234, manual: true });
+  const ctx = await setup(t, { config: ALLOWED, bridge });
+  const original = bridge.rmi.bind(bridge);
+  bridge.rmi = (socket, reply, bytes) =>
+    bytes[0] === 0x85 && bytes[2] === 0x01
+      ? reply(OP.CN_RMI_RESPONSE, { result: 8, message: { result: 30 } })
+      : original(socket, reply, bytes);
+  const ack = await ctx.set('mode', 'auto');
+  assert.equal(ack.success, false);
+  assert.match(ack.error, /partly applied/);
+});
+
+test('a schedule read of an unexpected shape: state unknown, nothing sent', async (t) => {
+  const ctx = await setup(t, { config: ALLOWED });
+  const original = ctx.bridge.rmi.bind(ctx.bridge);
+  ctx.bridge.rmi = (socket, reply, bytes) =>
+    bytes[0] === 0x83
+      ? reply(OP.CN_RMI_RESPONSE, { message: { message: Buffer.from([1, 2, 1]) } })
+      : original(socket, reply, bytes);
+  for (const [role, value] of [
+    ['speed', '3'],
+    ['mode', 'manual'],
+  ]) {
+    const ack = await ctx.set(role, value);
+    assert.equal(ack.success, false);
+    assert.match(ack.error, /not readable: nothing was sent/);
+  }
+  assert.ok(!ctx.bridge.rmis.some((m) => m[0] === 0x84));
+});
+
+test('only IPv4 addresses are taken', async (t) => {
+  const bridge = new FakeBridge();
+  const ctx = await setup(t, { config: { host: 'lanc.local' }, bridge, create: false });
+  await ctx.clock.advance(1_000);
+  assert.match(ctx.status().message.en, /Address not understood/);
+  assert.equal(bridge.sockets.length, 0);
+});
+
+test('a measure goes to Gladys at most every 30 s; the latest value is kept', async (t) => {
+  const ctx = await setup(t);
+  await ctx.clock.advance(40_000);
+  const id = ctx.ids.feature('temperature-outdoor');
+  const sent = () => ctx.gladys.fake.states.filter((s) => s.device_feature_external_id === id);
+  const before = sent().length;
+  const le = (v) => {
+    const b = Buffer.alloc(2);
+    b.writeInt16LE(v);
+    return b;
+  };
+  ctx.bridge.notify(ctx.bridge.current, 276, le(90));
+  await ctx.clock.advance(1_000);
+  ctx.bridge.notify(ctx.bridge.current, 276, le(95));
+  await ctx.clock.advance(5_000);
+  ctx.bridge.notify(ctx.bridge.current, 276, le(97));
+  await ctx.clock.advance(5_000);
+  assert.equal(sent().length, before + 1, 'one value in 11 s');
+  await ctx.clock.advance(30_000);
+  assert.equal(sent().length, before + 2);
+  assert.equal(ctx.state('temperature-outdoor'), 9.7);
 });

@@ -52,9 +52,11 @@ ventilation.
 
 ## Configuration
 
-1. **Adresse IP du LAN C**.
-2. **PIN du LAN C** : 4 chiffres, utilisés **une seule fois**, pour
-   enregistrer Gladys sur le LAN C. Vide : 0000. C'est un champ secret :
+1. **Adresse IP du LAN C** (une adresse IPv4, pas un nom).
+2. **PIN du LAN C** : 4 chiffres, envoyés au LAN C **à chaque tentative
+   d'enregistrement** (une seule par action de votre part : premier
+   démarrage, nouvelle adresse ou nouveau PIN, « Tester la connexion »
+   après un arrêt). Vide : 0000. C'est un champ secret :
    gardé par Gladys dans sa base, jamais réaffiché dans l'interface, envoyé
    seulement au LAN C, jamais écrit dans les journaux, jamais copié dans
    `/data`.
@@ -66,8 +68,8 @@ ventilation.
 
 Le bouton **Tester la connexion** se connecte tout de suite si aucune
 session n'est ouverte et dit comment cela s'est passé. Il lève aussi un
-arrêt (PIN refusé, LAN C plein, enregistrement retiré) : un seul nouvel
-essai suit.
+arrêt (PIN refusé, LAN C plein, enregistrement retiré ou sans réponse) : un
+seul nouvel essai suit.
 
 Le bouton **Lister les applications enregistrées sur le LAN C** (session
 ouverte) montre le nom et l'identifiant de chaque application enregistrée ;
@@ -87,6 +89,15 @@ celle de Gladys est marquée « (cette intégration) ».
   seul nouvel essai), ou cliquez sur « Tester la connexion ».
 - **LAN C plein** : arrêt de même, jusqu'à ce que vous libériez une place
   (voir ci-dessous) puis cliquiez sur « Tester la connexion ».
+- **Enregistrement sans réponse claire** (code d'erreur, pas de réponse,
+  connexion coupée, redémarrage pendant l'essai) : la tentative est notée
+  dans `/data` avant l'envoi ; elle n'est **jamais renouvelée d'elle-même**
+  (le PIN serait renvoyé). L'état donne le code ; « Tester la connexion »,
+  une nouvelle adresse ou un nouveau PIN autorisent un seul nouvel essai.
+- Si le fichier `/data/comfoair-state.json` existe mais est illisible, il
+  n'est jamais remplacé (il garde l'identifiant de Gladys) : rien ne démarre
+  et l'état le dit. Réparez-le ou supprimez-le (Gladys prendra alors une
+  nouvelle place), puis redémarrez l'intégration.
 - **Enregistrement retiré** (par une autre application) : Gladys ne se
   réenregistre pas d'elle-même ; « Tester la connexion » autorise un seul
   nouvel enregistrement.
@@ -101,24 +112,36 @@ celle de Gladys est marquée « (cette intégration) ».
 
 ## Libérer une place sur le LAN C
 
-1. Cliquez sur **Lister les applications enregistrées sur le LAN C** (il faut
-   une session ouverte) : vous voyez le nom et l'identifiant (32 caractères)
-   de chaque application. Le LAN C reconnaît une application à cet
-   identifiant seul, sans PIN : il sert de clé, ne le partagez pas.
-2. Retirez celles que vous n'utilisez plus (un ancien téléphone, un essai de
-   Home Assistant…) **depuis une application déjà enregistrée qui sait le
-   faire**, par exemple l'outil en ligne de commande d'aiocomfoconnect sur un
-   ordinateur de votre réseau déjà enregistré :
-   `python -m aiocomfoconnect deregister <identifiant à retirer> --host <adresse du LAN C>`
-   (voir sa documentation pour les options). Gladys elle-même ne retire
-   aucune application dans cette version.
-3. Pour libérer **la place de Gladys** : retirez son identifiant (marqué
-   « cette intégration » dans la liste, aussi dans
-   `/data/comfoair-state.json`) depuis une autre application. **Supprimer
-   l'intégration de Gladys ne libère pas sa place** sur le LAN C.
-4. En dernier recours, une remise à zéro du LAN C (voir sa notice) remet le
-   PIN à 0000 ; elle efface probablement aussi les enregistrements (non
-   vérifié).
+Retirer un enregistrement demande **une application déjà enregistrée** sur
+le LAN C : quand il est plein, Gladys (pas encore enregistrée) ne peut ni
+lister ni retirer. Gladys elle-même ne retire aucune application dans cette
+version. Les identifiants (32 caractères) servent de clé : le LAN C
+reconnaît une application à son identifiant seul, sans PIN ; ne les
+partagez pas.
+
+1. **Trouver l'identifiant à retirer** : quand Gladys a une session, le
+   bouton **Lister les applications enregistrées sur le LAN C** montre le nom
+   et l'identifiant de chacune (celle de Gladys est marquée « (cette
+   intégration) », son identifiant est aussi dans
+   `/data/comfoair-state.json`).
+2. **Le retirer depuis une application déjà enregistrée**, par exemple
+   l'outil en ligne de commande d'aiocomfoconnect sur un ordinateur de votre
+   réseau, avec l'identifiant d'une application **déjà enregistrée** (celui
+   sous lequel cet ordinateur s'est enregistré un jour, ou celui de Gladys
+   lu dans `/data/comfoair-state.json`) :
+   `python -m aiocomfoconnect deregister <identifiant à retirer> --host <adresse du LAN C> --uuid <identifiant d'une application déjà enregistrée>`.
+   L'outil **prend la session** du LAN C : l'application Zehnder ou Gladys
+   est coupée pendant ce temps ; Gladys revient d'elle-même en 5 minutes au
+   plus.
+3. L'application Zehnder permet peut-être de retirer un appareil (non
+   vérifié). Sinon, en dernier recours, une remise à zéro du LAN C (voir sa
+   notice) remet le PIN à 0000 et efface probablement les enregistrements
+   (non vérifié).
+4. **Supprimer l'intégration de Gladys ne libère pas sa place** sur le LAN
+   C : retirez son identifiant comme ci-dessus.
+
+Tant que Gladys tient la session, l'application Zehnder vous proposera de la
+prendre : acceptez, Gladys redemandera la session 5 minutes plus tard.
 
 ## Commandes et mode absent
 
@@ -163,8 +186,8 @@ celle de Gladys est marquée « (cette intégration) ».
 
 - Jamais testée avec une vraie VMC (voir plus haut).
 - Le protocole du LAN C circule en clair : un appareil de votre réseau peut
-  lire ce qui passe. Le PIN ne passe sur le réseau qu'une fois, à
-  l'enregistrement.
+  lire ce qui passe. Le PIN passe sur le réseau à chaque tentative
+  d'enregistrement (une par action de votre part au plus).
 - L'appareil est identifié par le numéro de série de la VMC : une autre VMC
   donne un nouvel appareil.
 - Pas encore pris en charge : les alarmes et erreurs de la VMC, le boost

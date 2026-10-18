@@ -129,6 +129,16 @@ export const T = {
     fr: "Le LAN C n'a plus de place pour une nouvelle application : libérez une place (voir la documentation), puis cliquez sur « Tester la connexion ».",
     en: 'The LAN C has no room for another app: free a place (see the documentation), then click "Test the connection".',
   },
+  registrationFailed: {
+    fr: (why) =>
+      `L'enregistrement de Gladys sur le LAN C n'a pas abouti (${why}) : il n'est jamais retenté de lui-même (le PIN serait renvoyé). Vérifiez le LAN C, puis cliquez sur « Tester la connexion » (un seul nouvel essai).`,
+    en: (why) =>
+      `The registration of Gladys on the LAN C did not succeed (${why}): it is never retried by itself (the PIN would be sent again). Check the LAN C, then click "Test the connection" (one new try).`,
+  },
+  stateUnreadable: {
+    fr: "Le fichier d'état de /data (comfoair-state.json) existe mais est illisible : il n'est pas remplacé (il garde l'identifiant de Gladys sur le LAN C). Réparez-le ou supprimez-le, puis redémarrez l'intégration.",
+    en: 'The state file in /data (comfoair-state.json) exists but cannot be read: it is not replaced (it keeps the identifier of Gladys on the LAN C). Repair or delete it, then restart the integration.',
+  },
   unregistered: {
     fr: "Gladys n'est plus enregistrée sur le LAN C (retirée par une autre application ?). Aucun nouvel enregistrement automatique : cliquez sur « Tester la connexion » pour s'enregistrer à nouveau.",
     en: 'Gladys is no longer registered on the LAN C (removed by another app?). No automatic new registration: click "Test the connection" to register again.',
@@ -149,6 +159,16 @@ export const E = {
   awayDisabled: {
     fr: "La vitesse 0 (absent) coupe presque la ventilation : elle n'est pas autorisée dans la configuration. Rien n'a été envoyé.",
     en: 'Speed 0 (away) almost stops the ventilation: it is not allowed in the configuration. Nothing was sent.',
+  },
+  manualAtAway: {
+    fr: "La vitesse est à 0 (absent) : passer en manuel la garderait, ce que la configuration n'autorise pas. Rien n'a été envoyé.",
+    en: 'The speed is 0 (away): switching to manual would keep it, which the configuration does not allow. Nothing was sent.',
+  },
+  partial: {
+    fr: (what) =>
+      `${what} : partiellement appliquée (le premier message a été accepté, le second a échoué ou n'a pas été confirmé). L'état est relu.`,
+    en: (what) =>
+      `${what}: partly applied (the first message was accepted, the second failed or was not confirmed). The state is read again.`,
   },
   busy: {
     fr: "Une autre commande est en cours : rien n'a été envoyé.",

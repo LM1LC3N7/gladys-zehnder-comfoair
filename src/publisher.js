@@ -129,13 +129,19 @@ export class StatePublisher {
     if (this.pending.size === 0) return;
     const left = this.budget.left;
     const entries = [...this.pending.values()];
+    const now = this.now();
     const priority = entries.filter((s) => isPriority(s.device_feature_external_id));
+    // A measure is sent at most every TIMINGS.minInterval (its history stays
+    // light); the latest value waits. Selects and texts go at once.
+    const dueAt = (s) =>
+      (this.last.get(s.device_feature_external_id)?.at ?? -Infinity) + TIMINGS.minInterval;
     const others = entries.filter((s) => !isPriority(s.device_feature_external_id));
+    const due = others.filter((s) => dueAt(s) <= now);
     const first = priority.slice(0, Math.max(0, left));
     const room = Math.max(0, left - LIMITS.priorityStates - first.length);
-    const batch = [...first, ...others.slice(0, room)];
+    const batch = [...first, ...due.slice(0, room)];
     if (batch.length === 0) {
-      this.later();
+      this.later(this.nextTry(dueAt));
       return;
     }
     for (const state of batch) this.pending.delete(state.device_feature_external_id);
@@ -171,15 +177,31 @@ export class StatePublisher {
       }
       this.budget.spend(part.length);
     }
-    if (this.pending.size > 0) this.later();
+    if (this.pending.size > 0) this.later(this.nextTry(dueAt));
   }
 
-  later() {
+  /** When something pending can go: the budget for a due one, else its interval. */
+  nextTry(dueAt) {
+    const now = this.now();
+    const budget = this.budget.left > 0 ? 0 : this.budget.wait;
+    let next = Infinity;
+    for (const state of this.pending.values()) {
+      const id = state.device_feature_external_id;
+      next = Math.min(next, Math.max(budget, isPriority(id) ? 0 : dueAt(state) - now));
+    }
+    return Number.isFinite(next) ? next : undefined;
+  }
+
+  /** Sends again later: after `ms`, or when the budget frees up (1 s at least). */
+  later(ms) {
     if (this.timer) return;
-    this.timer = this.timers.setTimeout(() => {
-      this.timer = undefined;
-      this.flush();
-    }, this.budget.wait || 1_000);
+    this.timer = this.timers.setTimeout(
+      () => {
+        this.timer = undefined;
+        this.flush();
+      },
+      Math.max(1_000, ms ?? (this.budget.wait || 1_000)),
+    );
   }
 
   stop() {
