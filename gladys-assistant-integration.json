@@ -6,8 +6,8 @@
     "en": "Zehnder ComfoAir Q ventilation (Q350, Q450, Q600) over the local ComfoConnect LAN C.",
     "fr": "VMC double flux Zehnder ComfoAir Q (Q350, Q450, Q600) en local par le ComfoConnect LAN C."
   },
-  "version": "0.1.1",
-  "docker_image": "ghcr.io/lm1lc3n7/gladys-zehnder-comfoair:0.1.1",
+  "version": "0.1.2",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-zehnder-comfoair:0.1.2",
   "gladys_version": ">=5.1.0",
   "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-zehnder-comfoair/main/cover.png",
   "categories": ["climate", "environment"],
